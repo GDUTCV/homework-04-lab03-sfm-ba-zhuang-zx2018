@@ -14,8 +14,8 @@ DATA_DIR = os.path.join(PROJECT_DIR, 'data')
 argparser = argparse.ArgumentParser()
 argparser.add_argument('--dataset', type=str, choices=['temple', 'mini-temple'])
 argparser.add_argument('--ba', action='store_true')
-args = argparser.parse_args()
-
+# args = argparser.parse_args()
+args = argparser.parse_args(['--dataset','mini-temple','--ba']) # 添加模拟命令行参数
 DATASET = args.dataset
 SAVE_DIR = os.path.join(PREDICTION_DIR, DATASET)
 KEYPOINT_DIR = os.path.join(SAVE_DIR, 'keypoints')

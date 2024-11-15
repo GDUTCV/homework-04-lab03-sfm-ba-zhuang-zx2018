@@ -26,8 +26,21 @@ def get_init_image_ids(scene_graph: dict) -> (str, str):
     """
     max_pair = [None, None]  # dummy value
     """ YOUR CODE HERE """
-    
+    # 初始化最大内点数量
+    max_num_inliers = 0
+    max_pair = None  # 用于存储具有最大内点数量的图像对
 
+    # 遍历场景图中的图像对
+    for image_id1, neighbors in scene_graph.items():
+        for image_id2 in neighbors:
+            # 加载图像对的匹配信息
+            matches = load_matches(image_id1=image_id1, image_id2=image_id2)
+            num_inliers = matches.shape[0]  # 计算内点数量
+
+            # 更新最大内点数量及对应图像对
+            if num_inliers > max_num_inliers:
+                max_num_inliers = num_inliers
+                max_pair = [image_id1, image_id2]
 
     """ END YOUR CODE HERE """
     image_id1, image_id2 = sorted(max_pair)
@@ -78,8 +91,22 @@ def get_init_extrinsics(image_id1: str, image_id2: str, intrinsics: np.ndarray) 
 
     extrinsics2 = np.zeros(shape=[3, 4], dtype=float)
     """ YOUR CODE HERE """
-    
+    extrinsics1 = np.array([
+        [1, 0, 0, 0],  # 单位矩阵 [I]
+        [0, 1, 0, 0],
+        [0, 0, 1, 0]
+    ])
 
+    # 使用本质矩阵计算 image_id2 的外参矩阵
+    _, R, t, _ = cv2.recoverPose(
+        E=essential_mtx,  # 本质矩阵
+        points1=points2d_1,  # 第一张图像的2D点
+        points2=points2d_2,  # 第二张图像的2D点
+        cameraMatrix=intrinsics  # 相机内参矩阵
+    )
+
+    # 将旋转矩阵 R 和平移向量 t 拼接，形成 image_id2 的外参矩阵
+    extrinsics2 = np.hstack((R, t))  # 使用 np.hstack 更直观地拼接矩阵
 
     """ END YOUR CODE HERE """
     return extrinsics1, extrinsics2
@@ -154,8 +181,21 @@ def get_reprojection_residuals(points2d: np.ndarray, points3d: np.ndarray, intri
     """
     residuals = np.zeros(points2d.shape[0])
     """ YOUR CODE HERE """
-   
+    # 将3D点齐次化
+    homo_3d_points = np.hstack((points3d, np.ones((points3d.shape[0], 1))))  # 添加齐次坐标
+    homo_3d_points_T = homo_3d_points.T  # 转置齐次3D点
 
+    # 计算投影矩阵
+    extrinsics = np.hstack([rotation_mtx, tvec.reshape(-1, 1)])  # 将旋转矩阵与平移向量合并为外参矩阵
+    P = intrinsics @ extrinsics  # 计算总的投影矩阵
+
+    # 投影3D点到2D空间
+    calculated_pts2d = P @ homo_3d_points_T  # 进行矩阵乘法得到投影点
+    calculated_pts2d /= calculated_pts2d[-1, :]  # 齐次坐标归一化
+    calculated_pts2d = calculated_pts2d[:-1].T  # 去掉齐次坐标并转置为原格式
+
+    # 计算欧几里得距离作为残差
+    residuals = np.linalg.norm(points2d - calculated_pts2d, axis=1)
 
     """ END YOUR CODE HERE """
     return residuals
@@ -202,9 +242,27 @@ def solve_pnp(image_id: str, point2d_idxs: np.ndarray, all_points3d: np.ndarray,
         2. convert the returned rotation vector to rotation matrix using cv2.Rodrigues
         3. compute the reprojection residuals
         """
-       
+        #gpt警告！！！
+        # 使用solvePnP求解相机位姿
+        _, rotation_vector, tvec = cv2.solvePnP(
+            objectPoints=selected_pts3d,  # 选定的3D点
+            imagePoints=selected_pts2d,  # 选定的2D点
+            cameraMatrix=intrinsics,  # 相机内参矩阵
+            distCoeffs=None,  # 无畸变系数
+            flags=cv2.SOLVEPNP_ITERATIVE  # 迭代求解方法
+        )
 
+        # 将旋转向量转换为旋转矩阵
+        rotation_mtx, _ = cv2.Rodrigues(rotation_vector)
 
+        # 计算重投影残差
+        residuals = get_reprojection_residuals(
+            points2d=points2d,  # 原始2D点
+            points3d=points3d,  # 原始3D点
+            intrinsics=intrinsics,  # 相机内参矩阵
+            rotation_mtx=rotation_mtx,  # 计算得到的旋转矩阵
+            tvec=tvec  # 平移向量
+        )
         """ END YOUR CODE HERE """
 
         is_inlier = residuals <= inlier_threshold
@@ -254,8 +312,16 @@ def add_points3d(image_id1: str, image_id2: str, all_extrinsic: dict, intrinsics
     triangulate between the image points for the unregistered matches for image_id1 and image_id2 to get new points3d
     new_points3d = triangulate(..., kp_idxs1=matches[:, 0], kp_idxs2=matches[:, 1], ...)
     """
-    
-
+    # 通过三角化计算新的3D点
+    new_points3d = triangulate(
+        image_id1=image_id1,  # 第一张图像的ID
+        image_id2=image_id2,  # 第二张图像的ID
+        kp_idxs1=matches[:, 0],  # 第一张图像中的关键点索引
+        kp_idxs2=matches[:, 1],  # 第二张图像中的关键点索引
+        extrinsics1=all_extrinsic[image_id1],  # 第一张图像的外参矩阵
+        extrinsics2=all_extrinsic[image_id2],  # 第二张图像的外参矩阵
+        intrinsics=intrinsics  # 相机内参矩阵
+    )
 
     """ END YOUR CODE HERE """
 
@@ -285,10 +351,22 @@ def get_next_pair(scene_graph: dict, registered_ids: list):
     """
     max_new_id, max_registered_id, max_num_inliers = None, None, 0
     """ YOUR CODE HERE """
-    
+    # 遍历已注册图像ID
+    for registered_id in registered_ids:
+        # 获取当前图像的邻居节点
+        neighbors = scene_graph[registered_id]
+        # 遍历邻居节点中的新图像ID
+        for new_id in neighbors:
+            if new_id not in registered_ids:  # 确保新图像未被注册
+                # 加载匹配信息
+                matches = load_matches(registered_id, new_id)
+                num_inliers = matches.shape[0]  # 获取内点数量
+                # 更新最大内点数和对应的图像ID
+                if num_inliers > max_num_inliers:
+                    max_num_inliers = num_inliers
+                    max_new_id = new_id
+                    max_registered_id = registered_id
 
-
-    
     """ END YOUR CODE HERE """
     return max_new_id, max_registered_id
 

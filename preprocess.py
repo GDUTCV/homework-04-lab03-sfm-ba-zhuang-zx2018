@@ -16,7 +16,7 @@ DATA_DIR = os.path.join(PROJECT_DIR, 'data')
 argparser = argparse.ArgumentParser()
 argparser.add_argument('--dataset', type=str, choices=['temple', 'mini-temple'])
 argparser.add_argument('--ba', action='store_true')
-args = argparser.parse_args()
+args = argparser.parse_args(['--dataset','mini-temple','--ba']) # 添加模拟命令行参数
 
 DATASET = args.dataset
 DATASET_DIR = os.path.join(DATA_DIR, DATASET)
@@ -39,9 +39,9 @@ HAS_BUNDLE_ADJUSTMENT = args.ba
 SPLIT = 'bundle-adjustment' if HAS_BUNDLE_ADJUSTMENT else 'no-bundle-adjustment'
 RESULT_DIR = os.path.join(SAVE_DIR, 'results', SPLIT)
 
-assert not (HAS_BUNDLE_ADJUSTMENT and DATASET == 'temple'), \
-    'fail safe for students; remove line if u have the the resources to do BA for large cases and interested.'
-
+# assert not (HAS_BUNDLE_ADJUSTMENT and DATASET == 'temple'), \
+#     'fail safe for students; remove line if u have the the resources to do BA for large cases and interested.'
+# 注释执行debug
 
 class ParallelDataset(tdata.Dataset):
     def __init__(self, data: list, func):
@@ -118,8 +118,10 @@ def detect_keypoints(image_file: os.path):
     """ YOUR CODE HERE:
     Detect keypoints using cv2.SIFT_create() and sift.detectAndCompute
     """
-    
-
+    # sift
+    sift = cv2.SIFT_create()# 创建sift点
+    img = cv2.imread(image_file)
+    keypoints, descriptors = sift.detectAndCompute(img, None)
 
     """ END YOUR CODE HERE. """
 
@@ -167,9 +169,13 @@ def create_feature_matches(image_file1: os.path, image_file2: os.path, lowe_rati
     1. Run cv.BFMatcher() and matcher.knnMatch(descriptors1, descriptors2, 2)
     2. Filter the feature matches using the Lowe ratio test.
     """
-    
-
-
+    # BF
+    bf = cv2.BFMatcher()
+    matches = bf.knnMatch(descriptors1, descriptors2, 2)
+    # good_matches.append(matches)
+    for i, j in matches:
+        if i.distance < lowe_ratio * j.distance:
+            good_matches.append([i])
     """ END YOUR CODE HERE. """
     if len(good_matches) < min_matches:
         return match_id
@@ -242,7 +248,9 @@ def create_ransac_matches(image_file1: os.path, image_file2: os.path,
     Perform goemetric verification by finding the essential matrix between keypoints in the first image and keypoints in
     the second image using cv2.findEssentialMatrix(..., method=cv2.RANSAC, threshold=ransac_threshold, ...)
     """
-    
+    # 计算essential matrix
+    essential_mtx, is_inlier = cv2.findEssentialMat(points1=points1, points2=points2, cameraMatrix=camera_intrinsics,
+                                                    method=cv2.RANSAC, threshold=ransac_threshold)
 
 
     """ END YOUR CODE HERE """
@@ -278,9 +286,19 @@ def create_scene_graph(image_files: list, min_num_inliers: int = 40):
     Add edges to <graph> if the minimum number of geometrically verified inliers between images is at least  
     <min_num_inliers> 
     """
-    
+    from itertools import combinations
+    #遍历所有图片对
+    for i, j in combinations(range(len(image_ids)), 2):
+        id_1, id_2 = image_ids[i], image_ids[j]
+        match_id = f'{id_1}_{id_2}'
+        match_save_file = os.path.join(RANSAC_MATCH_DIR, f'{match_id}.npy')
 
-    
+        # 判断是否已经计算出匹配点
+        if os.path.exists(match_save_file):
+            inliers = np.load(match_save_file)
+            if len(inliers) > min_num_inliers:
+                graph.add_edge(i, j)
+
     """ END YOUR CODE HERE """
 
     graph_dict = {node: [] for node in image_ids}
@@ -294,7 +312,7 @@ def create_scene_graph(image_files: list, min_num_inliers: int = 40):
         json.dump(graph_dict, f, indent=1)
 
 
-def preprocess(image_files: list):
+def preprocess(image_files: list):  # main的函数版本
     print('INFO: detecting image keypoints...')
     shutil.rmtree(KEYPOINT_DIR, ignore_errors=True)
     os.makedirs(KEYPOINT_DIR, exist_ok=True)
@@ -330,7 +348,7 @@ def main():
     print('INFO: detecting image keypoints...')
     shutil.rmtree(KEYPOINT_DIR, ignore_errors=True)
     os.makedirs(KEYPOINT_DIR, exist_ok=True)
-    parallel_processing(data=[(file,) for file in image_files], func=detect_keypoints)
+    parallel_processing(data=[(file,) for file in image_files], func=detect_keypoints)  #检测图像关键点
 
     print('INFO: creating pairwise matches between images...')
     matches = []
@@ -341,7 +359,7 @@ def main():
     shutil.rmtree(BF_MATCH_IMAGE_DIR, ignore_errors=True)
     os.makedirs(BF_MATCH_DIR, exist_ok=True)
     os.makedirs(BF_MATCH_IMAGE_DIR, exist_ok=True)
-    parallel_processing(data=matches, func=create_feature_matches)
+    parallel_processing(data=matches, func=create_feature_matches)  #创建匹配对
 
     print('INFO: creating ransac matches...')
     shutil.rmtree(RANSAC_MATCH_DIR, ignore_errors=True)
@@ -350,10 +368,10 @@ def main():
     os.makedirs(RANSAC_MATCH_DIR, exist_ok=True)
     os.makedirs(RANSAC_MATCH_IMAGE_DIR, exist_ok=True)
     os.makedirs(RANSAC_ESSENTIAL_DIR, exist_ok=True)
-    parallel_processing(data=matches, func=create_ransac_matches)
+    parallel_processing(data=matches, func=create_ransac_matches)   #生成ransac匹配对
 
     print('INFO: creating scene graph...')
-    create_scene_graph(image_files=image_files)
+    create_scene_graph(image_files=image_files) #创建场景图
 
 
 if __name__ == '__main__':
